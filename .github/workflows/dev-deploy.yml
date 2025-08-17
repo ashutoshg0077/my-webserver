@@ -2,7 +2,7 @@ name: Deploy to ECS (Dev)
 
 on:
   push:
-    branches: [ "dev" ]
+    branches: [ "main" ]
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}

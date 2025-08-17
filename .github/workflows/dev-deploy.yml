@@ -2,22 +2,21 @@ name: Deploy to ECS (Dev)
 
 on:
   push:
-    branches: [ "main" ]  
+    branches: [ "main" ] 
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
-  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}                 
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}         
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}                
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}               
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }} 
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: dev  # Optional: GitHub environment for tracking
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
@@ -31,10 +30,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push Docker image
+      - name: Build and push Docker image
         run: |
+          # Build with ECR repository tag
           docker build -t $ECR_REPOSITORY:dev .
+          # Tag with Git SHA for traceability
           docker tag $ECR_REPOSITORY:dev $ECR_REPOSITORY:$GITHUB_SHA
+          # Push both tags to ECR
           docker push $ECR_REPOSITORY:dev
           docker push $ECR_REPOSITORY:$GITHUB_SHA
 
@@ -46,7 +48,9 @@ jobs:
 
       - name: Update task definition with new image
         run: |
+          # Use jq to update the image URL
           jq '.containerDefinitions[0].image = "'"$ECR_REPOSITORY"':dev"' task-definition.json > updated-task-definition.json
+          # Print for debugging
           cat updated-task-definition.json
 
       - name: Register new task definition revision
@@ -61,3 +65,9 @@ jobs:
             --service $ECS_SERVICE \
             --task-definition $ECS_TASK_DEFINITION \
             --force-new-deployment
+
+      - name: Verify deployment status
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE

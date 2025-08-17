@@ -9,13 +9,13 @@ env:
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
-  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}  
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     outputs:
-      image_tag: ${{ steps.build.outputs.sha_short }}  
+      image_tag: ${{ steps.tag.outputs.sha_short }}
     steps:
       - uses: actions/checkout@v4
       
@@ -28,7 +28,7 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push image
-        id: build  
+        id: build
         run: |
           docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
           docker push $ECR_REPOSITORY:$GITHUB_SHA
@@ -50,7 +50,7 @@ jobs:
             --task-definition $ECS_TASK_DEFINITION \
             --query 'taskDefinition' > task-definition.json
           
-          jq --arg image "$ECR_REPOSITORY:${{ needs.build-and-push.outputs.image_tag }}" \
+          jq --arg image "$ECR_REPOSITORY:$GITHUB_SHA" \
             '.containerDefinitions[0].image = $image' \
             task-definition.json > updated-task-definition.json
           
@@ -67,9 +67,4 @@ jobs:
             --service $ECS_SERVICE \
             --task-definition $ECS_TASK_DEFINITION \
             --force-new-deployment
-
-      - name: Verify deployment
-        run: |
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE
+            

@@ -2,7 +2,7 @@ name: Deploy to ECS (Dev)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [dev]
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -12,50 +12,55 @@ env:
   ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
+    outputs:
+      image_tag: ${{ steps.tag.outputs.sha_short }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      - name: Build and push image
+        id: build
         run: |
-          docker build -t $ECR_REPOSITORY:dev .
-          docker tag $ECR_REPOSITORY:dev $ECR_REPOSITORY:$GITHUB_SHA
-          docker push $ECR_REPOSITORY:dev
+          docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
           docker push $ECR_REPOSITORY:$GITHUB_SHA
+          echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
-      - name: Download task definition
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition $ECS_TASK_DEFINITION \
             --query 'taskDefinition' > task-definition.json
-
-      - name: Update image in task definition
-        run: |
-          jq '.containerDefinitions[0].image = "'"$ECR_REPOSITORY"':dev"' task-definition.json > updated-task-definition.json
-
-      - name: Clean task definition
-        run: |
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' updated-task-definition.json > clean-task-definition.json
-
-      - name: Register task definition
-        run: |
+          
+          jq --arg image "$ECR_REPOSITORY:$GITHUB_SHA" \
+            '.containerDefinitions[0].image = $image' \
+            task-definition.json > updated-task-definition.json
+          
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            updated-task-definition.json > clean-task-definition.json
+          
           aws ecs register-task-definition \
             --cli-input-json file://clean-task-definition.json
 
-      - name: Deploy to ECS
+      - name: Deploy service
         run: |
           aws ecs update-service \
             --cluster $ECS_CLUSTER \

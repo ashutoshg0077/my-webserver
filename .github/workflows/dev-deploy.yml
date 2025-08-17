@@ -2,14 +2,14 @@ name: Deploy to ECS (Dev)
 
 on:
   push:
-    branches: [ "main" ] 
+    branches: [ "dev" ]
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}                 
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}         
-  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}                
-  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}               
-  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }} 
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
   deploy:
@@ -27,36 +27,33 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
         run: |
-          # Build with ECR repository tag
           docker build -t $ECR_REPOSITORY:dev .
-          # Tag with Git SHA for traceability
           docker tag $ECR_REPOSITORY:dev $ECR_REPOSITORY:$GITHUB_SHA
-          # Push both tags to ECR
           docker push $ECR_REPOSITORY:dev
           docker push $ECR_REPOSITORY:$GITHUB_SHA
 
-      - name: Download existing task definition
+      - name: Download task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition $ECS_TASK_DEFINITION \
             --query 'taskDefinition' > task-definition.json
 
-      - name: Update task definition with new image
+      - name: Update image in task definition
         run: |
-          # Use jq to update the image URL
           jq '.containerDefinitions[0].image = "'"$ECR_REPOSITORY"':dev"' task-definition.json > updated-task-definition.json
-          # Print for debugging
-          cat updated-task-definition.json
 
-      - name: Register new task definition revision
+      - name: Clean task definition
+        run: |
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' updated-task-definition.json > clean-task-definition.json
+
+      - name: Register task definition
         run: |
           aws ecs register-task-definition \
-            --cli-input-json file://updated-task-definition.json
+            --cli-input-json file://clean-task-definition.json
 
       - name: Deploy to ECS
         run: |
@@ -65,9 +62,3 @@ jobs:
             --service $ECS_SERVICE \
             --task-definition $ECS_TASK_DEFINITION \
             --force-new-deployment
-
-      - name: Verify deployment status
-        run: |
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE

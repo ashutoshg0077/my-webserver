@@ -1,8 +1,17 @@
-name: Deploy to ECS (Dev)
+name: Deploy to ECS (Manual Trigger)
 
 on:
-  push:
-    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'DEPLOY' to confirm"
+        required: true
+        default: "CANCEL"
+    branches: [dev]
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -12,50 +21,102 @@ env:
   ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      - name: Build and push image
+        id: build
         run: |
-          docker build -t $ECR_REPOSITORY:dev .
-          docker tag $ECR_REPOSITORY:dev $ECR_REPOSITORY:$GITHUB_SHA
-          docker push $ECR_REPOSITORY:dev
+          docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
+          docker tag $ECR_REPOSITORY:$GITHUB_SHA $ECR_REPOSITORY:latest-dev
           docker push $ECR_REPOSITORY:$GITHUB_SHA
+          docker push $ECR_REPOSITORY:latest-dev
+          echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
-      - name: Download task definition
+
+  sonarcloud-analysis:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0  
+
+      - name: Set up JDK (adjust for your language)
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build and run tests with coverage
+        run: |
+          # Add your build and test commands here
+          # Example for Maven:
+          # mvn -B verify
+          # Example for Node.js:
+          # npm ci
+          # npm test -- --coverage
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ env.SONAR_ORG }}
+            -Dsonar.host.url=https://sonarcloud.io
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition $ECS_TASK_DEFINITION \
             --query 'taskDefinition' > task-definition.json
-
-      - name: Update image in task definition
-        run: |
-          jq '.containerDefinitions[0].image = "'"$ECR_REPOSITORY"':dev"' task-definition.json > updated-task-definition.json
-
-      - name: Clean task definition
-        run: |
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' updated-task-definition.json > clean-task-definition.json
-
-      - name: Register task definition
-        run: |
+          
+          jq --arg image "$ECR_REPOSITORY:${{ needs.build-and-push.outputs.image_tag }}" \
+            '.containerDefinitions[0].image = $image' \
+            task-definition.json > updated-task-definition.json
+          
+          jq 'del(.taskDefinitionArn, .revision, .status)' \
+            updated-task-definition.json > clean-task-definition.json
+          
           aws ecs register-task-definition \
             --cli-input-json file://clean-task-definition.json
 
-      - name: Deploy to ECS
+      - name: Deploy service
         run: |
           aws ecs update-service \
             --cluster $ECS_CLUSTER \

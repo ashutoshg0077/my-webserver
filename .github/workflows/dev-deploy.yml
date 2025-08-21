@@ -1,8 +1,17 @@
-name: Deploy to ECS (Dev)
+name: Deploy to ECS (Manual Trigger)
 
 on:
-  push:
-    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'DEPLOY' to confirm"
+        required: true
+        default: "CANCEL"
+    branches: [develop-cleanup]
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -14,10 +23,10 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.tag.outputs.sha_short }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: develop-cleanup
       
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -31,7 +40,9 @@ jobs:
         id: build
         run: |
           docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
+          docker tag $ECR_REPOSITORY:$GITHUB_SHA $ECR_REPOSITORY:latest-dev
           docker push $ECR_REPOSITORY:$GITHUB_SHA
+          docker push $ECR_REPOSITORY:latest-dev
           echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
   deploy:
@@ -50,11 +61,11 @@ jobs:
             --task-definition $ECS_TASK_DEFINITION \
             --query 'taskDefinition' > task-definition.json
           
-          jq --arg image "$ECR_REPOSITORY:$GITHUB_SHA" \
+          jq --arg image "$ECR_REPOSITORY:${{ needs.build-and-push.outputs.image_tag }}" \
             '.containerDefinitions[0].image = $image' \
             task-definition.json > updated-task-definition.json
           
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+          jq 'del(.taskDefinitionArn, .revision, .status)' \
             updated-task-definition.json > clean-task-definition.json
           
           aws ecs register-task-definition \
@@ -67,4 +78,3 @@ jobs:
             --service $ECS_SERVICE \
             --task-definition $ECS_TASK_DEFINITION \
             --force-new-deployment
-            

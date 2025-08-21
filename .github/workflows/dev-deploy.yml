@@ -21,36 +21,9 @@ env:
   ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: dev
-      
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push image
-        id: build
-        run: |
-          docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
-          docker tag $ECR_REPOSITORY:$GITHUB_SHA $ECR_REPOSITORY:latest-dev
-          docker push $ECR_REPOSITORY:$GITHUB_SHA
-          docker push $ECR_REPOSITORY:latest-dev
-          echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-
-
   sonarcloud-analysis:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_dispatch'
-    
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +62,30 @@ jobs:
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ env.SONAR_ORG }}
             -Dsonar.host.url=https://sonarcloud.io
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        run: |
+          docker build -t $ECR_REPOSITORY:$GITHUB_SHA .
+          docker tag $ECR_REPOSITORY:$GITHUB_SHA $ECR_REPOSITORY:latest-dev
+          docker push $ECR_REPOSITORY:$GITHUB_SHA
+          docker push $ECR_REPOSITORY:latest-dev
+          echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
   deploy:
     needs: build-and-push

@@ -7,7 +7,7 @@ on:
         description: "Type 'DEPLOY' to confirm"
         required: true
         default: "CANCEL"
-    branches: [dev]
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -26,9 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0  
 
       - name: Set up JDK (adjust for your language)
         uses: actions/setup-java@v3
@@ -68,8 +65,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: dev
       
       - uses: aws-actions/configure-aws-credentials@v4
         with:

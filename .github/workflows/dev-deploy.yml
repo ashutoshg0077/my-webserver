@@ -28,7 +28,6 @@ jobs:
         with:
           ref: dev
       
-      - 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -46,7 +45,7 @@ jobs:
           docker push $ECR_REPOSITORY:latest-dev
           echo "sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
-  jobs:
+
   sonarcloud-analysis:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
@@ -75,7 +74,7 @@ jobs:
         run: |
           # Add your build and test commands here
           # Example for Maven:
-          #mvn -B verify
+          # mvn -B verify
           # Example for Node.js:
           # npm ci
           # npm test -- --coverage
